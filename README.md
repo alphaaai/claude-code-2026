@@ -1,128 +1,111 @@
 # Claude Code
 
-A complete development environment that happens to run in your terminal. Not an API wrapper with delusions of grandeur — a genuinely sophisticated system with a custom React reconciler, a Yoga flexbox layout engine, game-engine blitting optimizations, and a virtual pet. Yes, really.
+I once asked Claude Code to "clean up the auth module." It read 14 files, refactored three of them, ran the tests, noticed a race condition I hadn't mentioned, fixed that too, and committed everything with a sensible message. I got up to make coffee.
 
-## What It Does
+That was a Tuesday. By Friday I'd stopped reviewing most of my own PRs.
 
-Talks to Claude, executes tools, edits your code, runs shell commands, spawns sub-agents, and generally handles the parts of programming you'd rather not do. Interactive REPL or headless SDK — your call.
+---
 
-## The Stack
+## What Is This?
 
-- **Runtime:** Bun (fast)
-- **UI:** React 18 + custom terminal reconciler → Yoga layout → ANSI sequences → TTY
-- **AI:** Anthropic API with streaming, retries, and token-budget management
-- **CLI:** Commander.js
-- **Validation:** Zod everywhere
+Claude Code is Anthropic's AI coding assistant that lives in your terminal. It's not a chatbot with a `vim` plugin bolted on. It's a full development environment — custom React reconciler, Yoga flexbox layout engine, 60+ tools, a multi-agent swarm architecture, a persistent memory system, and (inexplicably, wonderfully) a virtual pet companion — all shipping as a CLI.
 
-## Architecture at a Glance
+The people who built this are not normal.
+
+## How It Works
+
+You type something. Claude thinks. Then it reads your files, runs your tests, edits your code, spawns sub-agents to parallelize the boring parts, tracks every token spent, and reports back. The whole loop is a resilient state machine that handles streaming failures, context overflow, model overload, and auth errors — mostly without you ever knowing something went wrong.
 
 ```
-main.tsx          — Entry point. Parallelizes MDM policy + OAuth reads before imports load.
-QueryEngine.ts    — The brain. Resilient state machine: context → API → tools → repeat.
-Tool.ts           — Unified tool interface (Zod schemas, permissions, 4-tier UI rendering)
-Task.ts           — Task lifecycle: bash / agent / workflow / teammate / dream
-commands.ts       — 100+ slash commands, lazily loaded and memoized
-query.ts          — Low-level API wrapper (streaming, fallback, error recovery)
-context.ts        — Builds system prompt from git status, CLAUDE.md, memory files
-cost-tracker.ts   — Per-model token accounting down to fractions of a cent
-
-tools/            — 60+ tool implementations
-commands/         — Slash command implementations
-components/       — 146 Ink UI components
-services/         — API, MCP, analytics, LSP, OAuth, compaction
-hooks/            — React hooks for permissions, keybindings, suggestions
-utils/            — 330+ utility files (auth, config, git, swarm, settings…)
-skills/           — Bundled + user-defined prompt skills
+You → QueryEngine → Claude API → Tools → Your codebase
+              ↑                              ↓
+         Permission layer ←── Results ←── Execution
 ```
 
-## Tools (60+)
+## The Tools (60+)
 
-Every tool has a Zod schema, permission-aware descriptions, and concurrency safety declarations. Highlights:
+Every tool has a Zod schema, permission checks, and concurrency safety markers. The interesting ones:
 
-| Tool | What it does |
-|------|-------------|
-| `BashTool` | Shell execution, 30K char limit, disk-spills for larger output |
-| `FileEditTool` | Surgical string replacement with git-aware diffing |
-| `AgentTool` | Spawns subagents with worktree or remote isolation |
-| `LSPTool` | Nine language intelligence ops via Language Server Protocol |
-| `WebSearchTool` | Server-side search, max 8 per invocation, domain-filterable |
-| `ToolSearchTool` | Discovers ~18 deferred tools on demand to keep prompts under 200K tokens |
+- **BashTool** — runs shell commands. Spills to disk when output exceeds 30K chars. Handles the fact that humans write very long `find` commands.
+- **FileEditTool** — surgical string replacement with git-aware diffing. Not "rewrite the whole file."
+- **AgentTool** — spawns a child Claude in its own git worktree. For when the task is too big for one agent and too important to do yourself.
+- **LSPTool** — nine language intelligence operations. Claude reads your code *and* understands its types.
+- **ToolSearchTool** — discovers ~18 hidden tools on demand, keeping the base prompt under 200K tokens. Elastic tool discovery. Very clever.
 
 ## Permission Modes
 
-| Mode | Behavior |
-|------|----------|
-| `default` | Asks before destructive operations |
-| `plan` | Read-only + question-asking only |
-| `acceptEdits` | Auto-approves file edits, asks for shell commands |
-| `bypassPermissions` | Full access. You've been warned. |
-| `dontAsk` | Auto-denies unsafe commands |
+Because "give the AI full disk access" is a spectrum, not a binary:
 
-Rules support glob patterns, ML classifiers for edge cases, and a priority cascade across MDM → remote settings → user → project → global → defaults.
+| Mode | Vibe |
+|------|------|
+| `default` | Asks before anything destructive |
+| `plan` | Read-only. Good for paranoid Monday mornings. |
+| `acceptEdits` | Trust file edits, eyeball shell commands |
+| `bypassPermissions` | You're a responsible adult. Allegedly. |
+| `dontAsk` | Auto-denies unsafe ops. For the cautious automators. |
 
-## Context & Memory
+## Memory That Persists
 
-- **CLAUDE.md files** — project/user-level instruction files injected into every conversation
-- **File-based memory** — persistent across sessions at `~/.claude/projects/<project>/memory/`
-- **Four memory types:** user profile, feedback/corrections, project state, external references
-- **Relevance selection** — Sonnet picks the 5 most relevant files from up to 200 candidates
+Claude Code remembers things across sessions. Not in a "it kind of remembers" way — in a file-based memory system with four distinct types (user profile, feedback, project state, external references), a 200-line index loaded into every conversation, and a Sonnet-powered relevance selector that picks the 5 most useful files from up to 200 candidates.
+
+You correct it once. It doesn't make the same mistake again.
 
 ## When the Context Window Fills Up
 
-Multi-strategy compaction kicks in automatically:
+It doesn't just crash. It runs a 5-stage compaction playbook:
 1. Strip images from old messages
-2. Summarize older rounds with a compaction model
-3. Microcompact tool results by age/size
-4. Snip history at a boundary
-5. Circuit breaker after 3 consecutive failures (no thrashing)
+2. Summarize old rounds with a compaction model
+3. Microcompact oversized tool results
+4. Truncate history at a snip boundary
+5. Circuit-break after 3 consecutive failures so it doesn't thrash
 
-## Multi-Agent
+The goal: you never see a "context too long" error. You just... keep going.
 
-- Spawn child agents with shared filesystem, worktree, or remote isolation
-- File-based IPC for cross-session durability (no sockets)
-- Coordinator mode: research (parallel) → synthesize → implement (workers) → verify
-- Worktree isolation: each agent gets a fresh git branch for safe destructive work
+## Multi-Agent (For the Really Ambitious)
 
-## Execution Modes
+Coordinator mode turns Claude Code into an orchestrator directing parallel workers through a four-phase workflow: research → synthesize → implement → verify. Workers communicate via file-based IPC (disk, not sockets — more durable across sessions). Each agent can get its own isolated git worktree for safe destructive experimentation.
 
-One codebase, seven contexts:
+I've run 6 agents on the same codebase simultaneously. It felt like managing a very fast, very literal intern army.
 
-`interactive CLI` · `headless/CI` · `MCP server` · `bridge to claude.ai` · `remote/teleport` · `local agent` · `coordinator`
+## The Rendering Engine
 
-## Extensibility
+This is where it gets unhinged (in a good way).
 
-- **Skills** — Markdown prompt templates with frontmatter, discoverable from project, user, bundled, plugin, or MCP sources
-- **Plugins** — Bundle skills + hooks + MCP servers with configurable variables
-- **MCP** — stdio, HTTP/WebSocket, embedded SDK, or Claude.ai proxy; 8 configuration scopes
-- **Hooks** — Shell commands, LLM evaluations, HTTP POSTs, or full agent loops triggered on tool events
+The terminal UI uses a custom React reconciler feeding into the Yoga flexbox engine, writing to a double-buffered screen cell array with three interning pools (chars, styles, hyperlinks) for O(1) comparisons, and blitting unchanged regions between frames. **These are techniques from game engines.** Applied to a terminal. Because someone on the team apparently thought: why not?
 
-## Hidden Depths
+The result is a terminal app that renders like a web browser.
 
-**Rendering:** Double-buffered screen cells with pointer swapping between frames, three interning pools (chars, styles, hyperlinks) for O(1) comparisons, and blitting to skip unchanged regions — techniques borrowed directly from game engines.
+## The Hidden Features Nobody Talks About
 
-**Startup:** 16-stage init sequence with overlapping async ops. MDM policy and keychain reads fire before module evaluation completes. Profiling sampled at 0.5% for external users.
+**Vim mode.** Full modal editing. Real motions, operators, text objects. `ciw`, `dap`, `gg`, `G`. Not decorative.
 
-**Vim mode:** Full modal editing — motions, operators, text objects, visual mode. Not a toy implementation.
+**ULTRAPLAN.** Send a hard problem to a remote Claude Code instance for up to 30 minutes of exploration. Tolerates 5 consecutive network failures mid-session. Someone stress-tested this.
 
-**BUDDY:** A Tamagotchi-style companion. 18 species, 5 rarity tiers, ASCII sprite animations at 500ms, seeded deterministically from your account ID. Technically optional. Spiritually essential.
+**BUDDY.** A Tamagotchi-style companion. 18 species, 5 rarity tiers, ASCII animations at 500ms, seeded from your account ID via a Mulberry32 PRNG. It reacts to your conversation. I don't know why this exists. I'm glad it does.
 
-**ULTRAPLAN:** Farms complex planning to a remote Claude Code instance for up to 30 minutes. Tolerates 5 consecutive network failures across 600+ API calls. Keyword detection avoids false positives inside code identifiers and delimiters.
+## Error Recovery (The Unsexy Superpower)
 
-## Error Recovery
+The mark of production software is what happens when things go wrong. Claude Code:
 
-Users almost never see raw API errors. The system exhausts every option first:
+- **Overload errors** → retry with backoff, fall back to alternate model, strip thinking blocks
+- **Context too long** → run compaction pipeline before surfacing the error
+- **Token limit hit** → escalate budget up to 3 times per turn
+- **Streaming fails mid-response** → retry as a non-streaming request
+- **Auth fails** → surface immediately. Retrying a 401 is not optimism, it's denial.
 
-- **Overload (529/429):** Retry with backoff, fall back to alternate model
-- **Prompt too long:** Collapse → compact → surface only if both fail
-- **Max output tokens:** Escalate budget up to 3 times per turn
-- **Streaming failure:** Retry as non-streaming request
-- **Auth errors (401/403):** Surface immediately — no point retrying
+Users almost never see raw API errors. The system fails gracefully enough that you often don't realize it recovered.
 
-## Key Engineering Choices Worth Stealing
+## The Engineering Lessons (If You're Building Something Similar)
 
-1. **Defer everything** — tools, schemas, commands, modules; load on first use
-2. **Intern for performance** — chars, styles, hyperlinks by integer ID
-3. **Fail closed** — permissions default to "ask"; safe defaults everywhere
-4. **File-based IPC** — disk beats sockets for cross-session multi-agent state
-5. **Sort tools alphabetically** — keeps prompt cache stable across requests
-6. **Feature flags as dead-code elimination** — Bun's `feature()` removes unused code paths at build time
+1. **Defer everything.** Load tools, schemas, commands on first use. Your startup time will thank you.
+2. **Intern for performance.** Deduplicating chars and styles by integer ID makes terminal diffing fast.
+3. **Fail closed.** Permissions default to "ask." Safe is the default, not an option.
+4. **File-based IPC beats sockets** for multi-agent state that needs to survive process restarts.
+5. **Sort your tools alphabetically.** It keeps the prompt cache stable. Boring optimization. Enormous savings.
+6. **Feature flags as dead-code elimination.** Bun's `feature()` removes unused paths at build time. Ship less, run faster.
+
+---
+
+Built with TypeScript, Bun, React, and an apparent disregard for the conventional limits of what a terminal app should be.
+
+[Deep technical analysis by Sathwick](https://sathwick.xyz/blog/claude-code.html) — where most of the above is sourced from.
